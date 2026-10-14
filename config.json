@@ -1,0 +1,57 @@
+﻿{
+    "golden_key":  "",
+    "telegram":  {
+                     "enabled":  false,
+                     "bot_token":  "",
+                     "chat_id":  "",
+                     "proxy":  ""
+                 },
+    "disabled_lots":  [
+
+                      ],
+    "settings":  {
+                     "random_interval_mode":  true,
+                     "check_interval_seconds":  120,
+                     "check_interval_min_seconds":  120,
+                     "check_interval_max_seconds":  180,
+                     "edit_delay_min_seconds":  2,
+                     "edit_delay_max_seconds":  5,
+                     "auto_raise_lots":  true,
+                     "auto_online":  true,
+                     "only_online_sellers":  true,
+                     "min_price_safety_floor":  0.001,
+                     "auto_detect_all_user_lots":  true,
+                     "ignored_categories":  [
+                                                "any_ore",
+                                                "any_service",
+                                                "any_item",
+                                                "any_set",
+                                                "farm_bosses"
+                                            ]
+                 },
+    "default_seller_prices":  {
+
+                              },
+    "custom_lot_rules":  {
+
+                         },
+    "auto_orders":  {
+                        "poll_interval_seconds":  60,
+                        "greeting_enabled":  false,
+                        "greeting_text":  "",
+                        "greeting_new_only":  true,
+                        "greeting_skip_system":  true,
+                        "new_order_enabled":  false,
+                        "new_order_text":  "",
+                        "confirm_reply_enabled":  false,
+                        "confirm_reply_text":  "",
+                        "review_reply_enabled":  false,
+                        "review_reply_5stars":  "",
+                        "review_reply_other":  "",
+                        "autoreply_enabled":  false,
+                        "autoreply_cooldown_seconds":  20,
+                        "autoreply_rules":  [
+
+                                            ]
+                    }
+}
