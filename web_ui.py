@@ -2438,6 +2438,7 @@ HTML_TEMPLATE = r"""
             </div>
             <button class="btn btn-outline" onclick="openPhoneModal()">📱 На телефон</button>
             <button class="btn" onclick="saveSettings()">Сохранить настройки</button>
+            <button class="btn btn-outline" onclick="location.href='/api/config/export'" title="Скачай config.json и загрузи его в репозиторий GitHub — тогда настройки на хостинге не слетят при рестарте">⬇️ Скачать настройки для хостинга</button>
         </div>
     </header>
 
@@ -3174,6 +3175,41 @@ HTML_TEMPLATE = r"""
     <div id="toast">Настройки успешно сохранены!</div>
 
     <script>
+        // ═══ Гейт доступа: пароль панели (для хостинга) ═══
+        // Если API отвечает 401 — панель спрашивает пароль (PANEL_PASSWORD
+        // на Render) и дальше подставляет его во все запросы сама.
+        (function () {
+            const origFetch = window.fetch.bind(window);
+            window.fpToken = () => localStorage.getItem('fp_token') || '';
+            window.fetch = function (url, opts) {
+                if (typeof url === 'string' && url.startsWith('/api/') && window.fpToken()) {
+                    url += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(window.fpToken());
+                }
+                return origFetch(url, opts);
+            };
+            window.fpAskPassword = async function () {
+                for (let i = 0; i < 5; i++) {
+                    const p = prompt('Панель защищена паролем. Введи PANEL_PASSWORD:');
+                    if (p === null) return false;
+                    try {
+                        const r = await origFetch('/api/bot/status?token=' + encodeURIComponent(p));
+                        if (r.status === 200) {
+                            localStorage.setItem('fp_token', p);
+                            location.reload();
+                            return true;
+                        }
+                    } catch (e) { break; }
+                }
+                return false;
+            };
+            (async function fpAuthGate() {
+                try {
+                    const r = await origFetch('/api/bot/status');
+                    if (r.status === 401) await window.fpAskPassword();
+                } catch (e) { /* локально без сети — не мешаем */ }
+            })();
+        })();
+
         let allLots = [];
         let disabledLotsSet = new Set();
         let currentConfig = {};
@@ -5778,6 +5814,26 @@ class DashboardHTTPHandler(http.server.BaseHTTPRequestHandler):
             self._send_json({"running": _is_bot_running()})
             return
 
+        # API: Скачать настройки для хостинга (config.json без секретов).
+        # Файл кладёшь в репозиторий GitHub — на хостинге настройки
+        # переживают рестарты и не слетают.
+        if path == "/api/config/export":
+            cfg = self._read_config()
+            cfg.pop("golden_key", None)                       # ключ — только в переменных окружения
+            tg = cfg.get("telegram") or {}
+            if isinstance(tg, dict):
+                tg.pop("bot_token", None)                     # секреты не уезжают в репозиторий
+            cfg.pop("panel_password", None)
+            data = json.dumps(cfg, ensure_ascii=False, indent=2)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition",
+                             'attachment; filename="config.json"')
+            self.send_header("Content-Length", str(len(data.encode("utf-8"))))
+            self.end_headers()
+            self.wfile.write(data.encode("utf-8"))
+            return
+
         # API: Статус автоподнятия ВСЕХ разделов
         if path == "/api/raise/status":
             state = _read_raise_state()
@@ -6686,14 +6742,22 @@ class DashboardHTTPHandler(http.server.BaseHTTPRequestHandler):
             logger.error(f"Ошибка сохранения {CONFIG_FILE}: {e}")
 
     def _require_auth(self) -> bool:
-        """Необязательная защита панели паролем (config.panel_password).
-        Пароль не задан — панель открыта (локальная сеть). Возвращает True,
-        если доступ ЗАПРЕЩЁН (ответ уже отправлен)."""
+        """Необязательная защита панели паролем.
+        Пароль берётся из config.panel_password ИЛИ из переменной окружения
+        PANEL_PASSWORD (важно на хостинге — Render/Bothost, где config.json
+        нет, а панель открыта в интернет). Пароль не задан — панель открыта
+        (локальная сеть). Возвращает True, если доступ ЗАПРЕЩЁН
+        (ответ уже отправлен)."""
         try:
             cfg = self._read_config()
         except Exception:
             cfg = {}
         pwd = (cfg.get("panel_password") or "").strip()
+        if not pwd:
+            try:
+                pwd = (PANEL_PASSWORD or "").strip()
+            except Exception:
+                pwd = ""
         if not pwd:
             return False
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
