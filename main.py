@@ -37,6 +37,45 @@ logging.basicConfig(
 logger = logging.getLogger("Main")
 
 
+class RenderKeepAlive:
+    """Пингует панель сам себя, чтобы Render Free не усыплял сервис.
+
+    Render Free ставит бота «в спячку» после ~15 минут без входящих
+    запросов — работает тогда только страница, а бота нет. Этот поток
+    раз в 10 минут дёргает свой же адрес (Render сам отдаёт переменную
+    RENDER_EXTERNAL_URL) — сервис держится awake 24/7.
+    """
+
+    def __init__(self, url: str, interval_sec: int = 600):
+        self.url = (url or "").rstrip("/")
+        self.interval_sec = max(60, interval_sec)
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if not self.url or (self._thread and self._thread.is_alive()):
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True,
+                                        name="RenderKeepAlive")
+        self._thread.start()
+        logger.info(f"Keep-alive запущен: пинг {self.url} каждые {self.interval_sec // 60} мин "
+                    "(Render Free не уйдёт в спячку)")
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _loop(self) -> None:
+        import requests  # локальный импорт — нужен только на хостинге
+        while not self._stop.is_set():
+            try:
+                r = requests.get(self.url + "/", timeout=20)
+                logger.info(f"Keep-alive: {self.url} -> HTTP {r.status_code}")
+            except Exception as e:
+                logger.warning(f"Keep-alive: не достучались ({e})")
+            self._stop.wait(self.interval_sec)
+
+
 class FunPayUndercutBot:
     def __init__(self, config_path: str = "config.json"):
         self.config_path = config_path
@@ -332,8 +371,16 @@ class FunPayUndercutBot:
         """
         self.print_banner()
 
+        # На хостинге (Render/Bothost) бот всегда стартует сам — иначе после
+        # каждого пробуждения/рестарта приходилось жать «▶ Старт» руками.
+        on_hosting = bool(os.getenv("RENDER_EXTERNAL_URL") or os.getenv("RENDER")
+                          or os.getenv("HOSTING") == "1" or os.getenv("BOTHOST") == "1")
+
         if autostart is None:
-            autostart = bool(self.config.get("settings", {}).get("autostart", False))
+            if on_hosting:
+                autostart = True
+            else:
+                autostart = bool(self.config.get("settings", {}).get("autostart", False))
         self.autostart = bool(autostart)
 
         try:
@@ -372,6 +419,17 @@ class FunPayUndercutBot:
                 start_dashboard_background(port=dash_port, open_browser=(not hosting and sys.platform == "win32"))
             except Exception as e:
                 logger.warning(f"Не удалось запустить Web Dashboard: {e}")
+
+        # Anti-sleep: на Render Free сервис засыпает без входящих запросов.
+        # Render сам отдаёт RENDER_EXTERNAL_URL — пингуем себя и остаёмся awake.
+        self.keepalive = None
+        render_url = os.getenv("RENDER_EXTERNAL_URL", "").strip()
+        if render_url:
+            try:
+                self.keepalive = RenderKeepAlive(render_url, interval_sec=600)
+                self.keepalive.start()
+            except Exception as e:
+                logger.warning(f"Не удалось запустить keep-alive: {e}")
 
         # Синхронизируем туннель с реальным портом панели (если порт был занят)
         # На хостинге туннель отключён — пропускаем.
@@ -585,7 +643,8 @@ class FunPayUndercutBot:
         self._settings_watcher = None
         for name, obj in (("Вечный онлайн", self.auto_online),
                           ("Авто-заказы", self.orders_worker),
-                          ("Туннель", self.tunnel)):
+                          ("Туннель", self.tunnel),
+                          ("Keep-alive", getattr(self, "keepalive", None))):
             try:
                 obj.stop()
             except Exception:
