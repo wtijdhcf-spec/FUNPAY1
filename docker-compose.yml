@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  funpay-undercut-bot:
+    build: .
+    container_name: funpay-undercut-bot
+    restart: unless-stopped
+    volumes:
+      - ./config.json:/app/config.json
+      - ./bot.log:/app/bot.log
